@@ -1,41 +1,46 @@
-from django.db import models
+import datetime
+from celery import shared_task
+from django.db.models import Count
+from .models import RequestLog, SuspiciousIP
 
-class RequestLog(models.Model):
+@shared_task
+def detect_anomalies():
     """
-    Represents a log of an incoming request, capturing the IP address,
-    geolocation data, the time of the request, and the path requested.
+    Celery task to detect suspicious IPs based on high request volume
+    or access to sensitive paths.
+    
+    This task should be scheduled to run periodically (e.g., hourly).
     """
-    ip_address = models.CharField(max_length=45)
-    timestamp = models.DateTimeField(auto_now_add=True)
-    path = models.CharField(max_length=2048)
-    country = models.CharField(max_length=100, null=True, blank=True)
-    city = models.CharField(max_length=100, null=True, blank=True)
-
-    def __str__(self):
-        """
-        Returns a string representation of the log entry.
-        """
-        location = f" from {self.city}, {self.country}" if self.city and self.country else ""
-        return f"{self.ip_address}{location} accessed {self.path} at {self.timestamp}"
-
-    class Meta:
-        verbose_name = "Request Log"
-        verbose_name_plural = "Request Logs"
-        ordering = ['-timestamp']
-
-class BlockedIP(models.Model):
-    """
-    Stores IP addresses that are blocked from accessing the site.
-    """
-    ip_address = models.GenericIPAddressField(unique=True)
-
-    def __str__(self):
-        """
-        Returns a string representation of the blocked IP.
-        """
-        return self.ip_address
-
-    class Meta:
-        verbose_name = "Blocked IP"
-        verbose_name_plural = "Blocked IPs"
-
+    one_hour_ago = datetime.datetime.now() - datetime.timedelta(hours=1)
+    
+    # 1. Find IPs with high request volume (more than 100 requests in the last hour)
+    high_volume_ips = RequestLog.objects.filter(
+        timestamp__gte=one_hour_ago
+    ).values('ip_address').annotate(
+        request_count=Count('ip_address')
+    ).filter(
+        request_count__gt=100
+    )
+    
+    for entry in high_volume_ips:
+        ip = entry['ip_address']
+        SuspiciousIP.objects.get_or_create(
+            ip_address=ip,
+            defaults={'reason': f"Exceeded request limit (100+) in the last hour with {entry['request_count']} requests."}
+        )
+        print(f"Flagged high-volume IP: {ip}")
+    
+    # 2. Find IPs that have accessed sensitive paths in the last hour
+    sensitive_paths = ['/admin/', '/login/']
+    sensitive_access_ips = RequestLog.objects.filter(
+        timestamp__gte=one_hour_ago,
+        path__in=sensitive_paths
+    ).values('ip_address').distinct()
+    
+    for entry in sensitive_access_ips:
+        ip = entry['ip_address']
+        SuspiciousIP.objects.get_or_create(
+            ip_address=ip,
+            defaults={'reason': "Accessed a sensitive path (e.g., /admin, /login) in the last hour."}
+        )
+        print(f"Flagged IP for sensitive path access: {ip}")
