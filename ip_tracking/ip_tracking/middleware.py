@@ -1,9 +1,10 @@
-from .models import RequestLog
+from django.http import HttpResponseForbidden
+from .models import RequestLog, BlockedIP
 
 class IPLoggingMiddleware:
     """
-    Middleware to log the IP address, timestamp, and path of every
-    incoming request to the database.
+    Middleware to log incoming requests and block requests from
+    IP addresses found in the BlockedIP list.
     """
     def __init__(self, get_response):
         self.get_response = get_response
@@ -17,8 +18,12 @@ class IPLoggingMiddleware:
         else:
             ip_address = request.META.get('REMOTE_ADDR')
 
-        # Create a log entry in the database.
+        # If an IP address is found, check if it's blocked.
         if ip_address:
+            if BlockedIP.objects.filter(ip_address=ip_address).exists():
+                return HttpResponseForbidden("<h1>Forbidden</h1><p>Your IP address has been blocked.</p>")
+
+            # If not blocked, log the request.
             RequestLog.objects.create(
                 ip_address=ip_address,
                 path=request.path
@@ -28,3 +33,4 @@ class IPLoggingMiddleware:
         response = self.get_response(request)
 
         return response
+
