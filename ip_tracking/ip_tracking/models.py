@@ -19,3 +19,20 @@ class RequestLog(models.Model):
         verbose_name = "Request Log"
         verbose_name_plural = "Request Logs"
         ordering = ['-timestamp']
+
+class BlockedIP(models.Model):
+    """
+    Stores IP addresses that are blocked from accessing the site.
+    """
+    ip_address = models.GenericIPAddressField(unique=True)
+
+    def __str__(self):
+        """
+        Returns a string representation of the blocked IP.
+        """
+        return self.ip_address
+
+    class Meta:
+        verbose_name = "Blocked IP"
+        verbose_name_plural = "Blocked IPs"
+
